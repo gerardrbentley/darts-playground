@@ -269,8 +269,8 @@ if prediction.is_deterministic:
 else:
     prediction_df = prediction.quantile_df()
 
-
-st.plotly_chart(px.line(pd.concat((timeseries.pd_dataframe(), prediction_df), axis=1)))
+display_data = timeseries.pd_dataframe().rename(lambda c: f"observation_{c}", axis=1).join(prediction_df.rename(lambda c: f"prediction_{c}", axis=1))
+st.plotly_chart(px.line(display_data))
 
 custom_fig = plt.figure()
 timeseries.plot()
