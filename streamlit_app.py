@@ -1,4 +1,5 @@
 import ast
+from datetime import datetime
 from inspect import isclass, signature
 from pathlib import Path
 from typing import Optional
@@ -269,7 +270,7 @@ else:
     prediction_df = prediction.quantile_df()
 
 
-st.plotly_chart(px.line(pd.concat((timeseries.pd_dataframe(), prediction_df))))
+st.plotly_chart(px.line(pd.concat((timeseries.pd_dataframe(), prediction_df), axis=1)))
 
 custom_fig = plt.figure()
 timeseries.plot()
@@ -287,3 +288,17 @@ with st.expander("Raw Training Data"):
 
 with st.expander("Forecasted Data"):
     st.dataframe(prediction_df)
+
+
+@st.experimental_memo
+def convert_df(df):
+    return df.to_csv().encode("utf-8")
+
+
+csv = convert_df(prediction_df)
+st.download_button(
+    label="Download data as CSV",
+    data=csv,
+    file_name=f"predictions_{model_choice}_{datetime.now().strftime('%Y_%m_%d')}.csv",
+    mime="text/csv",
+)
