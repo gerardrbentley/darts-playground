@@ -1,11 +1,13 @@
 # Darts + Streamlit
 
+[![Darts and Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://share.streamlit.io/gerardrbentley/darts-playground/main)
+
 :construction: Under Development.
 
 :warning: Not all models compiled in cloud.
 Tested list below
 
-A playground web app for the [Darts](https://unit8co.github.io/darts/) API with [Streamlit](TODO)!
+A playground web app for the [Darts](https://unit8co.github.io/darts/) API with [Streamlit](https://streamlit.io)!
 
 Featuring:
 
