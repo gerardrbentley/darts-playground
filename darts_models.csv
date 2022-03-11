@@ -1,0 +1,16 @@
+Model,Univariate,Multivariate,Probabilistic,Multiple-series training,Past-observed covariates support,Future-known covariates support,Reference
+NaiveDrift,True,False,False,False,False,False,
+NaiveMean,True,False,False,False,False,False,
+NaiveSeasonal,True,False,False,False,False,False,
+LinearRegressionModel,True,True,False,True,True,True,
+RegressionModel,True,True,False,True,True,True,
+ExponentialSmoothing,True,False,True,False,False,False,
+ARIMA,True,False,True,False,False,True,
+VARIMA,False,True,False,False,False,True,
+AutoARIMA,True,False,False,False,False,True,
+RandomForest,True,True,False,True,True,True,
+LightGBMModel,True,True,False,True,True,True,
+Theta,True,False,False,False,False,False,Theta & 4 Theta
+FourTheta,True,False,False,False,False,False,Theta & 4 Theta
+FFT,True,False,False,False,False,False,Fast Fourier Transform
+KalmanForecaster,True,True,True,False,False,True,N4SID paper (using the Kalman filter and N4SID for system identification)
