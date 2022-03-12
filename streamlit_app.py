@@ -208,7 +208,13 @@ with st.expander("Current Model Details"):
     st.write(model_kwargs)
     st.write(model_cls.__init__.__doc__)
 
-model = model_cls(*model_args, **model_kwargs)
+try:
+    model = model_cls(*model_args, **model_kwargs)
+except ValueError as e:
+    if 'lags' in str(e):
+        st.error(str(e))
+        st.stop()
+    raise e
 
 st.sidebar.subheader("Customize Training")
 num_periods = st.sidebar.number_input(
