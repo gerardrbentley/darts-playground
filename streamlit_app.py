@@ -123,7 +123,7 @@ timeseries = TimeSeries.from_dataframe(df, value_cols=value_cols)
 
 st.sidebar.subheader("Choose a Model")
 model_choice = st.sidebar.selectbox(
-    "Model Selection", ALL_MODELS.index, index=len(ALL_MODELS) - 1
+    "Model Selection", ALL_MODELS.index, 2
 )
 model_cls = models.__getattribute__(model_choice)
 toast.success(f"Loaded {model_choice}")
@@ -145,7 +145,7 @@ for name, parameter in signature(model_cls.__init__).parameters.items():
     if name != "self":
         if parameter.annotation == int:
             value = st.sidebar.number_input(
-                name, 0, 10000, parameter.default, key=name, help=str(parameter)
+                name, 0, value=parameter.default, key=name, help=str(parameter)
             )
             model_kwargs[name] = value
         elif parameter.annotation == Optional[ModelMode]:
@@ -211,7 +211,7 @@ with st.expander("Current Model Details"):
 model = model_cls(*model_args, **model_kwargs)
 
 st.sidebar.subheader("Customize Training")
-num_periods = st.sidebar.slider(
+num_periods = st.sidebar.number_input(
     "Number of validation periods",
     key="cust_period",
     min_value=2,
@@ -220,8 +220,10 @@ num_periods = st.sidebar.slider(
     help="How many periods worth of datapoints to exclude from training",
 )
 if not ALL_MODELS.at[model_choice, "Probabilistic"]:
-    st.sidebar.info("Not probabilistic, setting num_samples to 1")
+    st.sidebar.info(f"Model {model_choice} not probabilistic (is deterministic). One line will be plotted.")
     num_samples = 1
+    low_quantile = 0.1
+    high_quantile = 0.9
 else:
     num_samples = st.sidebar.number_input(
         "Number of prediction samples",
@@ -231,24 +233,31 @@ else:
         value=1000,
         help="Number of times a prediction is sampled for a probabilistic model",
     )
-
-st.sidebar.subheader("Customize Plotting")
-low_quantile = st.sidebar.slider(
-    "Lower Percentile",
-    key="cust_low",
-    min_value=0.01,
-    max_value=0.99,
-    value=0.05,
-    help="The quantile to use for the lower bound of the plotted confidence interval.",
-)
-high_quantile = st.sidebar.slider(
-    "High Percentile",
-    key="cust_high",
-    min_value=0.01,
-    max_value=0.99,
-    value=0.95,
-    help="The quantile to use for the upper bound of the plotted confidence interval.",
-)
+    st.sidebar.subheader("Customize Plotting")
+    low_quantile = st.sidebar.slider(
+        "Lower Percentile",
+        key="low_quantile",
+        min_value=0.01,
+        max_value=0.99,
+        value=0.05,
+        help="The quantile to use for the lower bound of the plotted confidence interval.",
+    )
+    mid_quantile = st.sidebar.slider(
+        "Lower Percentile",
+        key="mid_quantile",
+        min_value=0.01,
+        max_value=0.99,
+        value=0.5,
+        help="The quantile to use for the center of the plotted confidence interval.",
+    )
+    high_quantile = st.sidebar.slider(
+        "High Percentile",
+        key="high_quantile",
+        min_value=0.01,
+        max_value=0.99,
+        value=0.95,
+        help="The quantile to use for the upper bound of the plotted confidence interval.",
+    )
 
 
 train, val = timeseries[:-num_periods], timeseries[-num_periods:]
@@ -267,7 +276,7 @@ st.subheader("Forecast Plot")
 if prediction.is_deterministic:
     prediction_df = prediction.pd_dataframe()
 else:
-    prediction_df = prediction.quantile_df()
+    prediction_df = prediction.quantiles_df([low_quantile, mid_quantile, high_quantile])
 
 display_data = timeseries.pd_dataframe().rename(lambda c: f"observation_{c}", axis=1).join(prediction_df.rename(lambda c: f"prediction_{c}", axis=1))
 st.plotly_chart(px.line(display_data))
@@ -297,8 +306,8 @@ def convert_df(df):
 
 csv = convert_df(prediction_df)
 st.download_button(
-    label="Download data as CSV",
+    label="Download Forecast as CSV",
     data=csv,
-    file_name=f"predictions_{model_choice}_{datetime.now().strftime('%Y_%m_%d')}.csv",
+    file_name=f"forecast_{model_choice}_{datetime.now().strftime('%Y_%m_%d')}.csv",
     mime="text/csv",
 )
