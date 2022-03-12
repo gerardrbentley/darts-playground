@@ -1,4 +1,4 @@
-# Darts + Streamlit
+# Darts API Playground
 
 [![Darts and Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://share.streamlit.io/gerardrbentley/darts-playground/main)
 
