@@ -29,7 +29,6 @@ dtw_metrics = {
 }
 
 ALL_METRICS = {**non_dtw_metrics, **dtw_metrics}
-# st.write(list(ALL_METRICS.items()))
 seasonality_modes = [*SeasonalityMode]
 model_modes = [*ModelMode]
 trend_modes = [*TrendMode]
@@ -44,7 +43,26 @@ ALL_DATASETS = {
     if isclass(ds.__getattribute__(x))
     and x not in ("DatasetLoaderMetadata", "DatasetLoaderCSV")
 }
-PLOT_STATISTICS = {x: statistics.__getattribute__(x) for x in dir(statistics) if x.startswith('plot')}
+MODIFY_STATISTICS = [
+    "fill_missing_values",
+    #   "remove_from_series",  # requires some fidgeting
+    "remove_seasonality",
+    "remove_trend",
+]
+RESULT_STATISTICS = [
+    "check_seasonality",
+    "extract_trend_and_seasonality",
+    #   "granger_causality_tests",  # requires some fidgeting
+    "stationarity_test_adf",
+    "stationarity_test_kpss"
+    #   "stationarity_tests"  # both other tests
+]
+PLOT_STATISTICS = [
+    "plot_acf",
+    "plot_hist",
+    "plot_pacf",
+    #   "plot_residuals_analysis",  # Can't display easily
+]
 toast = st.empty()
 
 
@@ -226,12 +244,88 @@ for name, parameter in signature(model_cls.__init__).parameters.items():
             model_kwargs[name] = parsed_value
 
 with st.expander("Explore Current Dataset", True):
-    plot_choices = st.multiselect("Statistic Plots", PLOT_STATISTICS, ['plot_acf'], key='plot_choices')
+
+    analysis_choices = st.multiselect(
+        "Analysis Methods",
+        RESULT_STATISTICS,
+        ["check_seasonality"],
+        key="analysis_choices",
+    )
+    if len(analysis_choices) and not timeseries.is_univariate:
+        st.warning(
+            f"Can't run analysis on Multivariate Time Series. Please choose only one Value column to use this."
+        )
+    else:
+        for analysis in analysis_choices:
+            try:
+                analysis_fn = statistics.__getattribute__(analysis)
+                value = analysis_fn(timeseries)
+                st.subheader(analysis)
+                st.text(analysis_fn.__doc__.split("Parameters\n")[0])
+                if analysis == "check_seasonality":
+                    is_seasonal, seasonality_period = value
+                    if is_seasonal:
+                        st.info(
+                            f"Time Series is seasonal with period {seasonality_period}"
+                        )
+                    else:
+                        st.warning(
+                            f"Time Series is not seasonal with an inferred period."
+                        )
+                elif analysis == "extract_trend_and_seasonality":
+                    trend, seasonal = value
+                    display_data = (
+                        trend.pd_dataframe()
+                        .rename(lambda c: f"trend_{c}", axis=1)
+                        .join(
+                            seasonal.pd_dataframe().rename(
+                                lambda c: f"seasonal_{c}", axis=1
+                            )
+                        )
+                    )
+                    st.plotly_chart(px.line(display_data))
+                elif analysis == "stationarity_test_adf":
+                    adf, pvalue, usedlag, nobs, critical, icbest = value
+                    st.metric("adf", adf)
+                    st.metric("pvalue", pvalue)
+                    st.metric("usedlag", usedlag)
+                    st.metric("nobs", nobs)
+                    st.write(critical)
+                    st.metric("icbest", icbest)
+                    st.text(analysis_fn.__doc__.split("Returns\n")[1])
+                elif analysis == "stationarity_test_kpss":
+                    kpss_stat, pvalue, lags, critical = value
+                    st.metric("kpss_stat", kpss_stat)
+                    st.metric("pvalue", pvalue)
+                    st.metric("lags", lags)
+                    st.write(critical)
+                    st.text(analysis_fn.__doc__.split("Returns\n")[1])
+            except Exception as e:
+                st.error(str(e))
+
+    plot_choices = st.multiselect(
+        "Statistic Plots", PLOT_STATISTICS, ["plot_acf"], key="plot_choices"
+    )
     for plot in plot_choices:
         st.subheader(plot)
         fig = plt.figure()
         axis = plt.gca()
-        PLOT_STATISTICS.get(plot)(timeseries,axis=axis)
+        plot_fn = statistics.__getattribute__(plot)
+        st.text(plot_fn.__doc__.split("Parameters\n")[0])
+        if plot != "plot_hist" and not timeseries.is_univariate:
+            st.warning(
+                f"Can't run {plot} on Multivariate Time Series. Please choose only one Value column to use this."
+            )
+            continue
+        try:
+            if plot != "plot_hist":
+                plot_fn(timeseries, axis=axis)
+            else:
+                plot_fn(timeseries, ax=axis)
+        except Exception as e:
+            st.error(str(e))
+            continue
+
         st.pyplot(fig)
 with st.expander("Current Model Details"):
     st.write(model_kwargs)
@@ -327,9 +421,17 @@ if len(metric_choices):
     display_scores = []
     for metric_name in metric_choices:
         try:
-            display_scores.append({"Metric": metric_name, "Value": ALL_METRICS.get(metric_name)(val, prediction), "Description": ALL_METRICS.get(metric_name).__doc__.splitlines()[0]})
+            display_scores.append(
+                {
+                    "Metric": metric_name,
+                    "Value": ALL_METRICS.get(metric_name)(val, prediction),
+                    "Description": ALL_METRICS.get(metric_name).__doc__.splitlines()[0],
+                }
+            )
         except Exception as e:
-            st.warning(f"Metric {metric_name} error: {str(e)}\nDescription {ALL_METRICS.get(metric_name).__doc__.splitlines()[0]}{'' if 'stochastic' not in str(e) else ' Try a probabilistic model.'}")
+            st.warning(
+                f"Metric {metric_name} error: {str(e)}\nDescription {ALL_METRICS.get(metric_name).__doc__.splitlines()[0]}{'' if 'stochastic' not in str(e) else ' Try a probabilistic model.'}"
+            )
 
     scores = pd.DataFrame(display_scores)
     st.dataframe(scores)
