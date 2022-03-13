@@ -1,6 +1,6 @@
 Model,Univariate,Multivariate,Probabilistic,Multiple-series training,Past-observed covariates support,Future-known covariates support,Reference
-NaiveDrift,True,False,False,False,False,False,
 NaiveMean,True,False,False,False,False,False,
+NaiveDrift,True,False,False,False,False,False,
 NaiveSeasonal,True,False,False,False,False,False,
 LinearRegressionModel,True,True,False,True,True,True,
 RegressionModel,True,True,False,True,True,True,
