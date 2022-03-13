@@ -1,6 +1,7 @@
 import ast
 from datetime import datetime
 from inspect import isclass, signature
+from functools import partial
 from pathlib import Path
 from typing import Optional
 
@@ -12,9 +13,22 @@ import plotly.express as px
 import streamlit as st
 from darts import TimeSeries
 from darts.utils.utils import ModelMode, SeasonalityMode, TrendMode
+import darts.metrics as metrics
 
 st.set_page_config(page_title="Darts API Playground", page_icon=":dart:")
 
+non_dtw_metrics = {
+    x: metrics.__getattribute__(x)
+    for x in dir(metrics)
+    if not x.startswith("__") and x not in ("metrics", "dtw_metric")
+}
+dtw_metrics = {
+    f"dtw_{key}": partial(metrics.dtw_metric, metric=fn)
+    for key, fn in non_dtw_metrics.items()
+}
+
+ALL_METRICS = {**non_dtw_metrics, **dtw_metrics}
+# st.write(list(ALL_METRICS.items()))
 seasonality_modes = [*SeasonalityMode]
 model_modes = [*ModelMode]
 trend_modes = [*TrendMode]
@@ -47,8 +61,15 @@ with st.expander("More info on Darts Datasets"):
     for name, dataset in ALL_DATASETS.items():
         st.write(f"#### {name}\n\n{dataset.__doc__}")
 
-with st.expander("More info on Darts Models Compatibility"):
+with st.expander("More info on Darts Models"):
     st.write(ALL_MODELS)
+    for name in ALL_MODELS.index:
+        st.write(f"#### {name}\n\n{models.__getattribute__(name).__init__.__doc__}")
+
+with st.expander("More info on Darts Metrics"):
+    for name, fn in non_dtw_metrics.items():
+        st.write(f"### {name}\n\n{fn.__doc__}")
+    st.write(f"### dtw_metric\n\n{metrics.dtw_metric.__doc__}")
 
 st.sidebar.subheader("Choose a Dataset")
 use_example = st.sidebar.checkbox(
@@ -122,9 +143,7 @@ if len(value_cols) == 0:
 timeseries = TimeSeries.from_dataframe(df, value_cols=value_cols)
 
 st.sidebar.subheader("Choose a Model")
-model_choice = st.sidebar.selectbox(
-    "Model Selection", ALL_MODELS.index, 2
-)
+model_choice = st.sidebar.selectbox("Model Selection", ALL_MODELS.index, 2)
 model_cls = models.__getattribute__(model_choice)
 toast.success(f"Loaded {model_choice}")
 
@@ -211,7 +230,7 @@ with st.expander("Current Model Details"):
 try:
     model = model_cls(*model_args, **model_kwargs)
 except ValueError as e:
-    if 'lags' in str(e):
+    if "lags" in str(e):
         st.error(str(e))
         st.stop()
     raise e
@@ -226,7 +245,9 @@ num_periods = st.sidebar.number_input(
     help="How many periods worth of datapoints to exclude from training",
 )
 if not ALL_MODELS.at[model_choice, "Probabilistic"]:
-    st.sidebar.info(f"Model {model_choice} not probabilistic (is deterministic). One line will be plotted.")
+    st.sidebar.info(
+        f"Model {model_choice} not probabilistic (is deterministic). One line will be plotted."
+    )
     num_samples = 1
     low_quantile = 0.1
     high_quantile = 0.9
@@ -284,18 +305,42 @@ if prediction.is_deterministic:
 else:
     prediction_df = prediction.quantiles_df([low_quantile, mid_quantile, high_quantile])
 
-display_data = timeseries.pd_dataframe().rename(lambda c: f"observation_{c}", axis=1).join(prediction_df.rename(lambda c: f"prediction_{c}", axis=1))
+metric_choices = st.multiselect(
+    "Scoring Metrics",
+    ALL_METRICS,
+    key="metric",
+    default="mape",
+    help="Which metric functions are used to score the predictions against the ground truth values",
+)
+if len(metric_choices):
+    st.subheader(f"Scores over {num_periods} periods")
+    display_scores = []
+    for metric_name in metric_choices:
+        try:
+            display_scores.append({"Metric": metric_name, "Value": ALL_METRICS.get(metric_name)(val, prediction), "Description": ALL_METRICS.get(metric_name).__doc__.splitlines()[0]})
+        except Exception as e:
+            st.warning(f"Metric {metric_name} error: {str(e)}\nDescription {ALL_METRICS.get(metric_name).__doc__.splitlines()[0]}{'' if 'stochastic' not in str(e) else ' Try a probabilistic model.'}")
+
+    scores = pd.DataFrame(display_scores)
+    st.dataframe(scores)
+
+display_data = (
+    timeseries.pd_dataframe()
+    .rename(lambda c: f"observation_{c}", axis=1)
+    .join(prediction_df.rename(lambda c: f"prediction_{c}", axis=1))
+)
 st.plotly_chart(px.line(display_data))
 
-custom_fig = plt.figure()
-timeseries.plot()
+with st.expander("Matplotlib plot"):
+    custom_fig = plt.figure()
+    timeseries.plot()
 
-prediction.plot(
-    label="forecast", low_quantile=low_quantile, high_quantile=high_quantile
-)
+    prediction.plot(
+        label="forecast", low_quantile=low_quantile, high_quantile=high_quantile
+    )
 
-plt.legend()
-st.pyplot(custom_fig)
+    plt.legend()
+    st.pyplot(custom_fig)
 
 
 with st.expander("Raw Training Data"):
