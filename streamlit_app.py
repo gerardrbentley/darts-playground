@@ -274,16 +274,12 @@ with st.expander("Explore Current Dataset", True):
                         )
                 elif analysis == "extract_trend_and_seasonality":
                     trend, seasonal = value
-                    display_data = (
-                        trend.pd_dataframe()
-                        .rename(lambda c: f"trend_{c}", axis=1)
-                        .join(
-                            seasonal.pd_dataframe().rename(
-                                lambda c: f"seasonal_{c}", axis=1
-                            )
-                        )
-                    )
-                    st.plotly_chart(px.line(display_data))
+                    st.subheader('Trend Component')
+                    st.plotly_chart(px.line(trend.pd_dataframe()
+                        .rename(lambda c: f"trend_{c}", axis=1)))
+                    st.subheader('Seasonality Component')
+                    st.plotly_chart(px.line(seasonal.pd_dataframe()
+                        .rename(lambda c: f"seasonal_{c}", axis=1)))
                 elif analysis == "stationarity_test_adf":
                     adf, pvalue, usedlag, nobs, critical, icbest = value
                     st.metric("adf", adf)
