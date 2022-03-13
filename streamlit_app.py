@@ -13,6 +13,7 @@ import plotly.express as px
 import streamlit as st
 from darts import TimeSeries
 from darts.utils.utils import ModelMode, SeasonalityMode, TrendMode
+import darts.utils.statistics as statistics
 import darts.metrics as metrics
 
 st.set_page_config(page_title="Darts API Playground", page_icon=":dart:")
@@ -43,6 +44,7 @@ ALL_DATASETS = {
     if isclass(ds.__getattribute__(x))
     and x not in ("DatasetLoaderMetadata", "DatasetLoaderCSV")
 }
+PLOT_STATISTICS = {x: statistics.__getattribute__(x) for x in dir(statistics) if x.startswith('plot')}
 toast = st.empty()
 
 
@@ -223,6 +225,14 @@ for name, parameter in signature(model_cls.__init__).parameters.items():
             parsed_value = ast.literal_eval(raw_value)
             model_kwargs[name] = parsed_value
 
+with st.expander("Explore Current Dataset", True):
+    plot_choices = st.multiselect("Statistic Plots", PLOT_STATISTICS, ['plot_acf'], key='plot_choices')
+    for plot in plot_choices:
+        st.subheader(plot)
+        fig = plt.figure()
+        axis = plt.gca()
+        PLOT_STATISTICS.get(plot)(timeseries,axis=axis)
+        st.pyplot(fig)
 with st.expander("Current Model Details"):
     st.write(model_kwargs)
     st.write(model_cls.__init__.__doc__)
