@@ -18,31 +18,35 @@ import darts.metrics as metrics
 
 st.set_page_config(page_title="Darts API Playground", page_icon=":dart:")
 
-non_dtw_metrics = {
+NON_DTW_METRICS = {
     x: metrics.__getattribute__(x)
     for x in dir(metrics)
     if not x.startswith("__") and x not in ("metrics", "dtw_metric")
 }
-dtw_metrics = {
+DTW_METRICS = {
     f"dtw_{key}": partial(metrics.dtw_metric, metric=fn)
-    for key, fn in non_dtw_metrics.items()
+    for key, fn in NON_DTW_METRICS.items()
 }
 
-ALL_METRICS = {**non_dtw_metrics, **dtw_metrics}
-seasonality_modes = [*SeasonalityMode]
-model_modes = [*ModelMode]
-trend_modes = [*TrendMode]
-modes = [*model_modes, *seasonality_modes, *trend_modes]
+ALL_METRICS = {**NON_DTW_METRICS, **DTW_METRICS}
+SEASONALITY_MODES = [*SeasonalityMode]
+MODEL_MODES = [*ModelMode]
+TREND_MODES = [*TrendMode]
+ALL_MODES = [*MODEL_MODES, *SEASONALITY_MODES, *TREND_MODES]
 
 ALL_MODELS = pd.read_csv("darts_models.csv", index_col="Model")
-# ALL_MODELS = {x: models.__getattribute__(x) for x in dir(models) if isclass(models.__getattribute__(x))}
+# INSTALLED_MODELS = {name: attr for name, attr in vars(models).items() if isclass(attr)}
 
 ALL_DATASETS = {
-    x: ds.__getattribute__(x)
-    for x in dir(ds)
-    if isclass(ds.__getattribute__(x))
-    and x not in ("DatasetLoaderMetadata", "DatasetLoaderCSV")
+    name: attr
+    for name, attr in vars(ds).items()
+    if isclass(attr)
+    and name not in ("DatasetLoaderMetadata", "DatasetLoaderCSV")
 }
+DS_NAMES = [name for name, attr in vars(ds).items()
+    if isclass(attr)
+    and name not in ("DatasetLoaderMetadata", "DatasetLoaderCSV")
+]
 MODIFY_STATISTICS = [
     "fill_missing_values",
     #   "remove_from_series",  # requires some fidgeting
@@ -68,8 +72,8 @@ toast = st.empty()
 
 @st.experimental_memo
 def load_darts_dataset(dataset_name):
-    dataset = ALL_DATASETS.get(dataset_name)()
-    timeseries = dataset.load()
+    dataset_cls = getattr(ds, dataset_name)
+    timeseries = dataset_cls().load()
     df = timeseries.pd_dataframe()
     return df, timeseries
 
@@ -78,8 +82,11 @@ with st.expander("What is this?"):
     st.markdown(Path("README.md").read_text())
 
 with st.expander("More info on Darts Datasets"):
-    for name, dataset in ALL_DATASETS.items():
-        st.write(f"#### {name}\n\n{dataset.__doc__}")
+    ds_name = st.selectbox('See Docs for Dataset:', DS_NAMES, key='ds_doc')
+    ds_for_doc = getattr(ds, ds_name)
+    st.write(f"#### {ds_name}")
+    st.text(ds_for_doc)
+    st.text(ds_for_doc.__doc__)
 
 with st.expander("More info on Darts Models"):
     st.write(ALL_MODELS)
@@ -87,7 +94,7 @@ with st.expander("More info on Darts Models"):
         st.write(f"#### {name}\n\n{models.__getattribute__(name).__init__.__doc__}")
 
 with st.expander("More info on Darts Metrics"):
-    for name, fn in non_dtw_metrics.items():
+    for name, fn in NON_DTW_METRICS.items():
         st.write(f"### {name}\n\n{fn.__doc__}")
     st.write(f"### dtw_metric\n\n{metrics.dtw_metric.__doc__}")
 
@@ -106,7 +113,7 @@ options = {
     "Quarterly": ("Q", 8),
 }
 if use_example:
-    dataset_choice = st.sidebar.selectbox("Dataset", ALL_DATASETS, index=0)
+    dataset_choice = st.sidebar.selectbox("Dataset", DS_NAMES, index=0)
     with st.spinner("Fetching Dataset"):
         toast.info(f"Loading {dataset_choice}")
         df, timeseries = load_darts_dataset(dataset_choice)
@@ -190,8 +197,8 @@ for name, parameter in signature(model_cls.__init__).parameters.items():
         elif parameter.annotation == Optional[ModelMode]:
             value = st.sidebar.selectbox(
                 name,
-                modes,
-                modes.index(parameter.default),
+                ALL_MODES,
+                ALL_MODES.index(parameter.default),
                 key=name,
                 help=str(parameter),
             )
@@ -199,8 +206,8 @@ for name, parameter in signature(model_cls.__init__).parameters.items():
         elif parameter.annotation == SeasonalityMode:
             value = st.sidebar.selectbox(
                 name,
-                seasonality_modes,
-                seasonality_modes.index(parameter.default),
+                SEASONALITY_MODES,
+                SEASONALITY_MODES.index(parameter.default),
                 key=name,
                 help=str(parameter),
             )
@@ -208,8 +215,8 @@ for name, parameter in signature(model_cls.__init__).parameters.items():
         elif parameter.annotation == ModelMode:
             value = st.sidebar.selectbox(
                 name,
-                model_modes,
-                model_modes.index(parameter.default),
+                MODEL_MODES,
+                MODEL_MODES.index(parameter.default),
                 key=name,
                 help=str(parameter),
             )
@@ -217,8 +224,8 @@ for name, parameter in signature(model_cls.__init__).parameters.items():
         elif parameter.annotation == TrendMode:
             value = st.sidebar.selectbox(
                 name,
-                trend_modes,
-                trend_modes.index(parameter.default),
+                TREND_MODES,
+                TREND_MODES.index(parameter.default),
                 key=name,
                 help=str(parameter),
             )
