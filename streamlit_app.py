@@ -152,7 +152,7 @@ else:
     time_col = st.sidebar.selectbox(
         "Time Column",
         df.columns,
-        help="Name of the column in your csv with time period data",
+        help="Name of the column in your csv with time step values",
     )
     df[time_col] = pd.to_datetime(df[time_col])
     df = df.set_index(time_col, drop=True)
@@ -173,7 +173,7 @@ if timeseries is None:
     sampling_period = st.sidebar.selectbox(
         "Time Series Period",
         options,
-        help="How to define samples. Pandas will sum entries between periods to create a well-formed Time Series",
+        help="How to define samples. Pandas will sum entries between time steps to create a well-formed Time Series",
     )
     freq_string, periods_per_year = options[sampling_period]
     df = df.resample(freq_string).sum()
@@ -363,13 +363,21 @@ except ValueError as e:
     raise e
 
 st.sidebar.subheader("Customize Training")
-num_periods = st.sidebar.number_input(
-    "Number of validation periods",
-    key="cust_period",
+forecast_horizon = st.sidebar.number_input(
+    "Forecast Horizon",
+    key="forecast_horizon",
+    min_value=1,
+    max_value=len(timeseries),
+    value=3,
+    help="(For Backtest and Historical Forecast) How many number of time steps that separate the prediction time from the forecast time",
+)
+num_time_steps = st.sidebar.number_input(
+    "Number of validation time steps",
+    key="num_time_steps",
     min_value=2,
     max_value=len(timeseries),
     value=36,
-    help="How many periods worth of datapoints to exclude from training",
+    help="How many time steps worth of datapoints to exclude from training",
 )
 if not ALL_MODELS.at[model_choice, "Probabilistic"]:
     st.sidebar.info(
@@ -414,65 +422,24 @@ else:
     )
 
 
-train, val = timeseries[:-num_periods], timeseries[-num_periods:]
+train, val = timeseries[:-num_time_steps], timeseries[-num_time_steps:]
 
 toast.info("Training Model")
 model.fit(train)
 toast.success("Trained Model")
 
 num_predictions = len(val)
-toast.info(f"Forecasting {num_predictions} periods")
+toast.info(f"Forecasting {num_predictions} Time Steps")
 prediction = model.predict(num_predictions, num_samples=num_samples)
 toast.success(f"Forecasted data")
-
-st.subheader("Forecast Plot")
 
 if prediction.is_deterministic:
     prediction_df = prediction.pd_dataframe()
 else:
     prediction_df = prediction.quantiles_df([low_quantile, mid_quantile, high_quantile])
-all_backtests = {}
-metric_choices = st.multiselect(
-    "Scoring Metrics",
-    ALL_METRICS,
-    key="metric",
-    default="mape",
-    help="Which metric functions are used to score the predictions against the ground truth values",
-)
-if len(metric_choices):
-    st.subheader(f"Scores over {num_periods} periods")
-    display_scores = []
-    for metric_name in metric_choices:
-        try:
-            metric_fn = ALL_METRICS[metric_name]
-            if "mase" in metric_name:
-                value = metric_fn(val, prediction, train)
-            else:
-                value = metric_fn(val, prediction)
-                all_backtests[metric_name] = model.backtest(
-                    timeseries,
-                    start=timeseries.n_timesteps - num_periods,
-                    forecast_horizon=3,
-                    metric=metric_fn,
-                    reduction=None,
-                )
-            display_scores.append(
-                {
-                    "Metric": metric_name,
-                    "Value": value,
-                    "Description": metric_fn.__doc__.splitlines()[0],
-                }
-            )
-        except Exception as e:
-            st.warning(
-                f"Metric {metric_name} error: {str(e)}\nDescription {metric_fn.__doc__.splitlines()[0]}{'' if 'stochastic' not in str(e) else ' Try a probabilistic model.'}"
-            )
-
-    scores = pd.DataFrame(display_scores)
-    st.dataframe(scores)
 
 historical_forecast = model.historical_forecasts(
-    timeseries, start=timeseries.n_timesteps - num_periods, forecast_horizon=3
+    timeseries, start=timeseries.n_timesteps - num_time_steps, forecast_horizon=forecast_horizon
 )
 historical_df = historical_forecast.pd_dataframe()
 
@@ -481,7 +448,7 @@ display_data = (
     .rename(lambda c: f"observation_{c}", axis=1)
     .join(prediction_df.rename(lambda c: f"prediction_{c}", axis=1))
 )
-st.subheader("Data and Forecast")
+st.subheader("Data and Forecast Plot")
 st.checkbox(
     "Show Historical Forecast",
     value=True,
@@ -493,13 +460,55 @@ if st.session_state.show_historical:
         historical_df.rename(lambda c: f"historical_forecast_{c}", axis=1)
     )
 st.plotly_chart(px.line(display_data))
-
+st.subheader("View Error Metrics Over Validation Periods")
+metric_choices = st.multiselect(
+    "Scoring Metrics",
+    ALL_METRICS,
+    key="metric",
+    default="mape",
+    help="Which metric functions are used to score the predictions against the ground truth values",
+)
 if len(metric_choices):
-    st.subheader("Errors per Forecasted Period")
+    raw_scores = []
+    all_backtests = {}
+    for metric_name in metric_choices:
+        try:
+            metric_fn = ALL_METRICS[metric_name]
+            if "mase" in metric_name:
+                value = metric_fn(val, prediction, train)
+            else:
+                value = metric_fn(val, prediction)
+                all_backtests[metric_name] = model.backtest(
+                    timeseries,
+                    start=timeseries.n_timesteps - num_time_steps,
+                    forecast_horizon=forecast_horizon,
+                    metric=metric_fn,
+                    reduction=None,
+                )
+            raw_scores.append(
+                {
+                    "Metric": metric_name,
+                    "Value": value,
+                    "Description": metric_fn.__doc__.splitlines()[0],
+                }
+            )
+        except Exception as e:
+            st.warning(
+                f"Metric {metric_name} error: {str(e)}\nDescription {metric_fn.__doc__.splitlines()[0]}{'' if 'stochastic' not in str(e) else ' Try a probabilistic model.'}"
+            )
+
+    scores = pd.DataFrame(raw_scores)
+    st.subheader(f"Raw Metric Errors ({num_time_steps} time steps)")
+    st.dataframe(scores)
     backtest_df = pd.DataFrame(all_backtests)
-    backtest_df.index.name = "Forecasted Period"
+    st.subheader(f"Backtested Metric Errors ({forecast_horizon} time step forecast horizon)")
+    backtest_scores = pd.concat((backtest_df.mean(), backtest_df.median(), backtest_df.min(), backtest_df.max()), axis=1)
+    backtest_scores.columns = ['mean', 'median', 'min', 'max']
+    st.write(backtest_scores)
+    st.subheader("Backtested Errors per Forecasted Time Step")
+    backtest_df.index.name = "Forecasted Time Step"
     st.plotly_chart(px.line(backtest_df))
-    st.subheader("Total Count of Error Values over Forecasted Periods")
+    st.subheader("Total Count of Backtested Error Values over Forecasted Time Steps")
     st.selectbox(
         "Show Histogram for Backtest Metric",
         metric_choices,
