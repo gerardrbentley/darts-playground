@@ -470,10 +470,17 @@ def convert_df(df):
     return df.to_csv().encode("utf-8")
 
 
-csv = convert_df(prediction_df)
+forecast_csv = convert_df(prediction_df)
 st.download_button(
     label="Download Forecast as CSV",
-    data=csv,
+    data=forecast_csv,
     file_name=f"forecast_{model_choice}_{datetime.now().strftime('%Y_%m_%d')}.csv",
+    mime="text/csv",
+)
+all_csv = convert_df(display_data)
+st.download_button(
+    label="Download Data and Forecast as CSV",
+    data=all_csv,
+    file_name=f"all_data_{model_choice}_{datetime.now().strftime('%Y_%m_%d')}.csv",
     mime="text/csv",
 )
