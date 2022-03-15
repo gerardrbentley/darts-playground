@@ -26,6 +26,7 @@ NON_DTW_METRICS = {
 DTW_METRICS = {
     f"dtw_{key}": partial(metrics.dtw_metric, metric=fn)
     for key, fn in NON_DTW_METRICS.items()
+    if key != "mase"  # no time warp
 }
 
 ALL_METRICS = {**NON_DTW_METRICS, **DTW_METRICS}
@@ -40,12 +41,12 @@ ALL_MODELS = pd.read_csv("darts_models.csv", index_col="Model")
 ALL_DATASETS = {
     name: attr
     for name, attr in vars(ds).items()
-    if isclass(attr)
-    and name not in ("DatasetLoaderMetadata", "DatasetLoaderCSV")
+    if isclass(attr) and name not in ("DatasetLoaderMetadata", "DatasetLoaderCSV")
 }
-DS_NAMES = [name for name, attr in vars(ds).items()
-    if isclass(attr)
-    and name not in ("DatasetLoaderMetadata", "DatasetLoaderCSV")
+DS_NAMES = [
+    name
+    for name, attr in vars(ds).items()
+    if isclass(attr) and name not in ("DatasetLoaderMetadata", "DatasetLoaderCSV")
 ]
 MODIFY_STATISTICS = [
     "fill_missing_values",
@@ -82,7 +83,7 @@ with st.expander("What is this?"):
     st.markdown(Path("README.md").read_text())
 
 with st.expander("More info on Darts Datasets"):
-    ds_name = st.selectbox('See Docs for Dataset:', DS_NAMES, key='ds_doc')
+    ds_name = st.selectbox("See Docs for Dataset:", DS_NAMES, key="ds_doc")
     ds_for_doc = getattr(ds, ds_name)
     st.write(f"#### {ds_name}")
     st.text(ds_for_doc)
@@ -90,13 +91,23 @@ with st.expander("More info on Darts Datasets"):
 
 with st.expander("More info on Darts Models"):
     st.write(ALL_MODELS)
-    for name in ALL_MODELS.index:
-        st.write(f"#### {name}\n\n{models.__getattribute__(name).__init__.__doc__}")
+    model_name = st.selectbox("See Docs for Model:", ALL_MODELS.index, key="model_doc")
+    model_for_doc = getattr(models, model_name)
+    st.write(f"#### {model_name}")
+    st.text(model_for_doc)
+    st.text(model_for_doc.__init__.__doc__)
 
 with st.expander("More info on Darts Metrics"):
-    for name, fn in NON_DTW_METRICS.items():
-        st.write(f"### {name}\n\n{fn.__doc__}")
-    st.write(f"### dtw_metric\n\n{metrics.dtw_metric.__doc__}")
+    metric_name = st.selectbox("See Docs for Metric:", ALL_METRICS, key="metric_doc")
+    if "dtw" in metric_name:
+        st.info(
+            f"Dynamic Time Warp applies to all metrics. Select {metric_name.replace('dtw_', '')} to see docs on it"
+        )
+        metric_name = "dtw_metric"
+    metric_for_doc = getattr(metrics, metric_name)
+    st.write(f"#### {metric_name}")
+    st.text(metric_for_doc)
+    st.text(metric_for_doc.__doc__)
 
 st.sidebar.subheader("Choose a Dataset")
 use_example = st.sidebar.checkbox(
@@ -250,8 +261,7 @@ for name, parameter in signature(model_cls.__init__).parameters.items():
             parsed_value = ast.literal_eval(raw_value)
             model_kwargs[name] = parsed_value
 
-with st.expander("Explore Current Dataset", True):
-
+with st.expander("Explore Current Dataset"):
     analysis_choices = st.multiselect(
         "Analysis Methods",
         RESULT_STATISTICS,
@@ -265,7 +275,7 @@ with st.expander("Explore Current Dataset", True):
     else:
         for analysis in analysis_choices:
             try:
-                analysis_fn = statistics.__getattribute__(analysis)
+                analysis_fn = getattr(statistics, analysis)
                 value = analysis_fn(timeseries)
                 st.subheader(analysis)
                 st.text(analysis_fn.__doc__.split("Parameters\n")[0])
@@ -281,12 +291,20 @@ with st.expander("Explore Current Dataset", True):
                         )
                 elif analysis == "extract_trend_and_seasonality":
                     trend, seasonal = value
-                    st.subheader('Trend Component')
-                    st.plotly_chart(px.line(trend.pd_dataframe()
-                        .rename(lambda c: f"trend_{c}", axis=1)))
-                    st.subheader('Seasonality Component')
-                    st.plotly_chart(px.line(seasonal.pd_dataframe()
-                        .rename(lambda c: f"seasonal_{c}", axis=1)))
+                    st.subheader("Trend Component")
+                    st.plotly_chart(
+                        px.line(
+                            trend.pd_dataframe().rename(lambda c: f"trend_{c}", axis=1)
+                        )
+                    )
+                    st.subheader("Seasonality Component")
+                    st.plotly_chart(
+                        px.line(
+                            seasonal.pd_dataframe().rename(
+                                lambda c: f"seasonal_{c}", axis=1
+                            )
+                        )
+                    )
                 elif analysis == "stationarity_test_adf":
                     adf, pvalue, usedlag, nobs, critical, icbest = value
                     st.metric("adf", adf)
@@ -313,7 +331,7 @@ with st.expander("Explore Current Dataset", True):
         st.subheader(plot)
         fig = plt.figure()
         axis = plt.gca()
-        plot_fn = statistics.__getattribute__(plot)
+        plot_fn = getattr(statistics, plot)
         st.text(plot_fn.__doc__.split("Parameters\n")[0])
         if plot != "plot_hist" and not timeseries.is_univariate:
             st.warning(
@@ -424,16 +442,21 @@ if len(metric_choices):
     display_scores = []
     for metric_name in metric_choices:
         try:
+            metric_fn = ALL_METRICS[metric_name]
+            if "mase" in metric_name:
+                value = metric_fn(val, prediction, train)
+            else:
+                value = metric_fn(val, prediction)
             display_scores.append(
                 {
                     "Metric": metric_name,
-                    "Value": ALL_METRICS.get(metric_name)(val, prediction),
-                    "Description": ALL_METRICS.get(metric_name).__doc__.splitlines()[0],
+                    "Value": value,
+                    "Description": metric_fn.__doc__.splitlines()[0],
                 }
             )
         except Exception as e:
             st.warning(
-                f"Metric {metric_name} error: {str(e)}\nDescription {ALL_METRICS.get(metric_name).__doc__.splitlines()[0]}{'' if 'stochastic' not in str(e) else ' Try a probabilistic model.'}"
+                f"Metric {metric_name} error: {str(e)}\nDescription {metric_fn.__doc__.splitlines()[0]}{'' if 'stochastic' not in str(e) else ' Try a probabilistic model.'}"
             )
 
     scores = pd.DataFrame(display_scores)
