@@ -5,6 +5,8 @@ from functools import partial
 from pathlib import Path
 from typing import Optional
 
+from darts.utils.statistics import plot_hist
+import numpy as np
 import darts.datasets as ds
 import darts.models as models
 import matplotlib.pyplot as plt
@@ -429,7 +431,7 @@ if prediction.is_deterministic:
     prediction_df = prediction.pd_dataframe()
 else:
     prediction_df = prediction.quantiles_df([low_quantile, mid_quantile, high_quantile])
-
+all_backtests = {}
 metric_choices = st.multiselect(
     "Scoring Metrics",
     ALL_METRICS,
@@ -447,6 +449,13 @@ if len(metric_choices):
                 value = metric_fn(val, prediction, train)
             else:
                 value = metric_fn(val, prediction)
+                all_backtests[metric_name] = model.backtest(
+                    timeseries,
+                    start=timeseries.n_timesteps - num_periods,
+                    forecast_horizon=3,
+                    metric=metric_fn,
+                    reduction=None,
+                )
             display_scores.append(
                 {
                     "Metric": metric_name,
@@ -462,12 +471,51 @@ if len(metric_choices):
     scores = pd.DataFrame(display_scores)
     st.dataframe(scores)
 
+historical_forecast = model.historical_forecasts(
+    timeseries, start=timeseries.n_timesteps - num_periods, forecast_horizon=3
+)
+historical_df = historical_forecast.pd_dataframe()
+
 display_data = (
     timeseries.pd_dataframe()
     .rename(lambda c: f"observation_{c}", axis=1)
     .join(prediction_df.rename(lambda c: f"prediction_{c}", axis=1))
 )
+st.subheader("Data and Forecast")
+st.checkbox(
+    "Show Historical Forecast",
+    value=True,
+    key="show_historical",
+    help="Starting from the end of the training set, incrementally refit the model on new future values.",
+)
+if st.session_state.show_historical:
+    display_data = display_data.join(
+        historical_df.rename(lambda c: f"historical_forecast_{c}", axis=1)
+    )
 st.plotly_chart(px.line(display_data))
+
+if len(metric_choices):
+    st.subheader("Errors per Forecasted Period")
+    backtest_df = pd.DataFrame(all_backtests)
+    backtest_df.index.name = "Forecasted Period"
+    st.plotly_chart(px.line(backtest_df))
+    st.subheader("Total Count of Error Values over Forecasted Periods")
+    st.selectbox(
+        "Show Histogram for Backtest Metric",
+        metric_choices,
+        key="backtest_histogram",
+        help="Show raw number of each error value per metric.",
+    )
+
+    backtest_fig = plt.figure()
+    axis = plt.gca()
+    plot_hist(
+        all_backtests[st.session_state.backtest_histogram],
+        bins=np.arange(0, max(all_backtests[st.session_state.backtest_histogram]), 1),
+        title="Backtest Histogram",
+        ax=axis,
+    )
+    st.pyplot(backtest_fig)
 
 with st.expander("Matplotlib plot"):
     custom_fig = plt.figure()
