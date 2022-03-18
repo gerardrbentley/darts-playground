@@ -15,11 +15,11 @@ Featuring:
 - Upload your own dataset
 - Model training tuning
 - Model forecasting and plotting controls
-- Dataset Seasonality and other Metrics
+- Dataset Seasonality, Trend, and other Metrics
 - Error Metrics over forecasted periods
 - Historical Forecasting
 - Backtested Error Metrics
-- Flexible forecasting horizon for backtesting
+- Flexible forecasting horizon and stride for backtesting
 - Downloadable forecasts and data
 
 ## Explore A Time Series!

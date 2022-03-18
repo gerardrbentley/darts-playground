@@ -183,7 +183,12 @@ if len(value_cols) == 0:
 timeseries = TimeSeries.from_dataframe(df, value_cols=value_cols)
 
 st.sidebar.subheader("Choose a Model")
-model_choice = st.sidebar.selectbox("Model Selection", ALL_MODELS.index, 2)
+model_choice = st.sidebar.selectbox(
+    "Model Selection",
+    ALL_MODELS.index,
+    2,
+    help="Open 'Current Model Details' for documentation on parameters",
+)
 model_cls = models.__getattribute__(model_choice)
 toast.success(f"Loaded {model_choice}")
 
@@ -368,12 +373,24 @@ forecast_horizon = st.sidebar.number_input(
     key="forecast_horizon",
     min_value=1,
     max_value=len(timeseries),
-    value=3,
-    help="(For Backtest and Historical Forecast) How many number of time steps that separate the prediction time from the forecast time",
+    value=1,
+    help="(For Backtest and Historical Forecast) How many time steps separate the prediction time from the forecast time",
 )
-num_time_steps = st.sidebar.number_input(
+historical_forecast_stride = st.sidebar.number_input(
+    "Historical Forecast Stride",
+    key="historical_forecast_stride",
+    min_value=1,
+    max_value=forecast_horizon,
+    value=1,
+    help="(For Backtest and Historical Forecast) How many time steps between two consecutive predictions",
+)
+st.sidebar.info(
+    f"Model {model_choice} not a Neural Network. Will be retrained at every backtest stride."
+)
+historical_forecast_retrain = True
+num_predictions = st.sidebar.number_input(
     "Number of validation time steps",
-    key="num_time_steps",
+    key="num_predictions",
     min_value=2,
     max_value=len(timeseries),
     value=36,
@@ -422,26 +439,54 @@ else:
     )
 
 
-train, val = timeseries[:-num_time_steps], timeseries[-num_time_steps:]
+def get_prediction(model, train, num_predictions):
+    toast.info("Training Model")
+    with st.spinner("Training..."):
+        model.fit(train)
+    toast.success("Trained Model")
+    toast.info(f"Forecasting {num_predictions} Time Steps")
+    with st.spinner("Forecasting..."):
+        prediction = model.predict(num_predictions, num_samples=num_samples)
+    toast.success(f"Forecasted data")
+    if prediction.is_deterministic:
+        prediction_df = prediction.pd_dataframe()
+    else:
+        prediction_df = prediction.quantiles_df(
+            [low_quantile, mid_quantile, high_quantile]
+        )
+    return prediction, prediction_df
 
-toast.info("Training Model")
-model.fit(train)
-toast.success("Trained Model")
 
-num_predictions = len(val)
-toast.info(f"Forecasting {num_predictions} Time Steps")
-prediction = model.predict(num_predictions, num_samples=num_samples)
-toast.success(f"Forecasted data")
+def get_historical_forecast(
+    model, timeseries, start, forecast_horizon, stride, retrain
+):
+    toast.info("Historical Forecast Running")
+    with st.spinner("Historical Forecast..."):
+        historical_forecast = model.historical_forecasts(
+            timeseries,
+            start=start,
+            forecast_horizon=forecast_horizon,
+            stride=stride,
+            retrain=retrain,
+            overlap_end=False,
+            last_points_only=True,
+        )
+        historical_df = historical_forecast.pd_dataframe()
+    toast.success("Historical Forecast Finished")
+    return historical_forecast, historical_df
 
-if prediction.is_deterministic:
-    prediction_df = prediction.pd_dataframe()
-else:
-    prediction_df = prediction.quantiles_df([low_quantile, mid_quantile, high_quantile])
 
-historical_forecast = model.historical_forecasts(
-    timeseries, start=timeseries.n_timesteps - num_time_steps, forecast_horizon=forecast_horizon
+train, val = timeseries[:-num_predictions], timeseries[-num_predictions:]
+prediction, prediction_df = get_prediction(model, train, num_predictions)
+historical_forecast, historical_df = get_historical_forecast(
+    model,
+    timeseries,
+    timeseries.n_timesteps - num_predictions,
+    forecast_horizon,
+    historical_forecast_stride,
+    historical_forecast_retrain,
 )
-historical_df = historical_forecast.pd_dataframe()
+
 
 display_data = (
     timeseries.pd_dataframe()
@@ -480,7 +525,7 @@ if len(metric_choices):
                 value = metric_fn(val, prediction)
                 all_backtests[metric_name] = model.backtest(
                     timeseries,
-                    start=timeseries.n_timesteps - num_time_steps,
+                    start=timeseries.n_timesteps - num_predictions,
                     forecast_horizon=forecast_horizon,
                     metric=metric_fn,
                     reduction=None,
@@ -498,12 +543,22 @@ if len(metric_choices):
             )
 
     scores = pd.DataFrame(raw_scores)
-    st.subheader(f"Raw Metric Errors ({num_time_steps} time steps)")
+    st.subheader(f"Raw Metric Errors ({num_predictions} time steps)")
     st.dataframe(scores)
     backtest_df = pd.DataFrame(all_backtests)
-    st.subheader(f"Backtested Metric Errors ({forecast_horizon} time step forecast horizon)")
-    backtest_scores = pd.concat((backtest_df.mean(), backtest_df.median(), backtest_df.min(), backtest_df.max()), axis=1)
-    backtest_scores.columns = ['mean', 'median', 'min', 'max']
+    st.subheader(
+        f"Backtested Metric Errors ({forecast_horizon} time step forecast horizon)"
+    )
+    backtest_scores = pd.concat(
+        (
+            backtest_df.mean(),
+            backtest_df.median(),
+            backtest_df.min(),
+            backtest_df.max(),
+        ),
+        axis=1,
+    )
+    backtest_scores.columns = ["mean", "median", "min", "max"]
     st.write(backtest_scores)
     st.subheader("Backtested Errors per Forecasted Time Step")
     backtest_df.index.name = "Forecasted Time Step"
