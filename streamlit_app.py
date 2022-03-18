@@ -39,6 +39,7 @@ ALL_MODES = [*MODEL_MODES, *SEASONALITY_MODES, *TREND_MODES]
 
 ALL_MODELS = pd.read_csv("darts_models.csv", index_col="Model")
 # INSTALLED_MODELS = {name: attr for name, attr in vars(models).items() if isclass(attr)}
+# st.write(INSTALLED_MODELS)
 
 ALL_DATASETS = {
     name: attr
@@ -186,6 +187,7 @@ st.sidebar.subheader("Choose a Model")
 model_choice = st.sidebar.selectbox("Model Selection", ALL_MODELS.index, 2)
 model_cls = models.__getattribute__(model_choice)
 toast.success(f"Loaded {model_choice}")
+# st.help(model_cls.__init__)
 
 
 if len(timeseries.columns) == 1 and not ALL_MODELS.at[model_choice, "Univariate"]:
@@ -201,10 +203,22 @@ st.sidebar.subheader("Hand Tune Model Parameters")
 model_kwargs = {}
 model_args = []
 for name, parameter in signature(model_cls.__init__).parameters.items():
-    if name != "self":
+    if name == 'model' and model_choice == 'RNNModel':
+        value = st.sidebar.selectbox(
+            name,
+            ['RNN', 'LSTM', 'GRU'],
+            0,
+            key=name,
+            help=str(parameter),
+        )
+        model_kwargs[name] = value
+    elif name != "self":
         if parameter.annotation == int:
+            default = parameter.default
+            if parameter.default == parameter.empty:
+                default = 0
             value = st.sidebar.number_input(
-                name, 0, value=parameter.default, key=name, help=str(parameter)
+                name, 0, value=default, key=name, help=str(parameter)
             )
             model_kwargs[name] = value
         elif parameter.annotation == Optional[ModelMode]:
@@ -368,9 +382,29 @@ forecast_horizon = st.sidebar.number_input(
     key="forecast_horizon",
     min_value=1,
     max_value=len(timeseries),
-    value=3,
-    help="(For Backtest and Historical Forecast) How many number of time steps that separate the prediction time from the forecast time",
+    value=1,
+    help="(For Backtest and Historical Forecast) How many time steps separate the prediction time from the forecast time",
 )
+historical_forecast_stride = st.sidebar.number_input(
+    "Historical Forecast Stride",
+    key="historical_forecast_stride",
+    min_value=1,
+    max_value=forecast_horizon,
+    value=1,
+    help="(For Backtest and Historical Forecast) How many time steps between two consecutive predictions",
+)
+if not ALL_MODELS.at[model_choice, "Neural Net"]:
+    st.sidebar.info(
+        f"Model {model_choice} not a Neural Network. Will be retrained at every backtest stride."
+    )
+    historical_forecast_retrain = True
+else:
+    historical_forecast_retrain = st.sidebar.checkbox(
+        "Historical Forecast Retrain",
+        key="historical_forecast_retrain",
+        value=True,
+        help="(For Backtest and Historical Forecast) Whether to retrain the model for every prediction or not.",
+    )
 num_time_steps = st.sidebar.number_input(
     "Number of validation time steps",
     key="num_time_steps",
@@ -424,24 +458,38 @@ else:
 
 train, val = timeseries[:-num_time_steps], timeseries[-num_time_steps:]
 
-toast.info("Training Model")
-model.fit(train)
-toast.success("Trained Model")
-
 num_predictions = len(val)
-toast.info(f"Forecasting {num_predictions} Time Steps")
-prediction = model.predict(num_predictions, num_samples=num_samples)
-toast.success(f"Forecasted data")
+@st.experimental_memo
+def get_prediction(_train):
+    toast.info("Training Model")
+    with st.spinner("Training..."):
+        model.fit(train)
+    toast.success("Trained Model")
+    toast.info(f"Forecasting {num_predictions} Time Steps")
+    with st.spinner("Forecasting..."):
+        prediction = model.predict(num_predictions, num_samples=num_samples)
+    toast.success(f"Forecasted data")
+    if prediction.is_deterministic:
+        prediction_df = prediction.pd_dataframe()
+    else:
+        prediction_df = prediction.quantiles_df([low_quantile, mid_quantile, high_quantile])
+    return prediction, prediction_df
 
-if prediction.is_deterministic:
-    prediction_df = prediction.pd_dataframe()
-else:
-    prediction_df = prediction.quantiles_df([low_quantile, mid_quantile, high_quantile])
+@st.experimental_memo
+def get_historical_forecast(_timeseries, start, forecast_horizon, stride, retrain):
+    toast.info("Historical Forecast Running")
+    with st.spinner("Historical Forecast..."):
+        historical_forecast = model.historical_forecasts(
+            timeseries, start=start, forecast_horizon=forecast_horizon,
+            stride=stride, retrain=retrain, overlap_end=False, last_points_only=True
+        )
+        historical_df = historical_forecast.pd_dataframe()
+    toast.success("Historical Forecast Finished")
+    return historical_forecast, historical_df
 
-historical_forecast = model.historical_forecasts(
-    timeseries, start=timeseries.n_timesteps - num_time_steps, forecast_horizon=forecast_horizon
-)
-historical_df = historical_forecast.pd_dataframe()
+prediction, prediction_df = get_prediction(train)
+historical_forecast, historical_df = get_historical_forecast(timeseries, timeseries.n_timesteps - num_time_steps, forecast_horizon, historical_forecast_stride, historical_forecast_retrain)
+
 
 display_data = (
     timeseries.pd_dataframe()
