@@ -527,6 +527,8 @@ if len(metric_choices):
                     timeseries,
                     start=timeseries.n_timesteps - num_predictions,
                     forecast_horizon=forecast_horizon,
+                    stride=historical_forecast_stride,
+                    retrain=historical_forecast_retrain,
                     metric=metric_fn,
                     reduction=None,
                 )
