@@ -28,7 +28,6 @@ for key, values in st.experimental_get_query_params().items():
 
 
 def update_state(key: str, value: Optional[List[Any]] = None):
-    print(key, value)
     if value is not None:
         st.session_state[key] = value
     new_args = {**st.experimental_get_query_params(), key: st.session_state[key]}
