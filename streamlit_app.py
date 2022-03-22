@@ -1,9 +1,10 @@
 import ast
+import pickle
 from datetime import datetime
 from inspect import isclass, signature
 from functools import partial
 from pathlib import Path
-from typing import Optional
+from typing import Any, List, Optional
 
 from darts.utils.statistics import plot_hist
 import numpy as np
@@ -19,6 +20,20 @@ import darts.utils.statistics as statistics
 import darts.metrics as metrics
 
 st.set_page_config(page_title="Darts API Playground", page_icon=":dart:")
+toast = st.empty()
+for key, values in st.experimental_get_query_params().items():
+    value = values[0] if len(values) == 1 else values
+    if key not in st.session_state:
+        st.session_state[key] = value
+
+
+def update_state(key: str, value: Optional[List[Any]] = None):
+    print(key, value)
+    if value is not None:
+        st.session_state[key] = value
+    new_args = {**st.experimental_get_query_params(), key: st.session_state[key]}
+    st.experimental_set_query_params(**new_args)
+
 
 NON_DTW_METRICS = {
     x: metrics.__getattribute__(x)
@@ -38,18 +53,18 @@ TREND_MODES = [*TrendMode]
 ALL_MODES = [*MODEL_MODES, *SEASONALITY_MODES, *TREND_MODES]
 
 ALL_MODELS = pd.read_csv("darts_models.csv", index_col="Model")
-# INSTALLED_MODELS = {name: attr for name, attr in vars(models).items() if isclass(attr)}
 
 ALL_DATASETS = {
     name: attr
     for name, attr in vars(ds).items()
     if isclass(attr) and name not in ("DatasetLoaderMetadata", "DatasetLoaderCSV")
 }
-DS_NAMES = [
+DS_NAMES = ["Custom"] + [
     name
     for name, attr in vars(ds).items()
     if isclass(attr) and name not in ("DatasetLoaderMetadata", "DatasetLoaderCSV")
 ]
+
 MODIFY_STATISTICS = [
     "fill_missing_values",
     #   "remove_from_series",  # requires some fidgeting
@@ -70,7 +85,6 @@ PLOT_STATISTICS = [
     "plot_pacf",
     #   "plot_residuals_analysis",  # Can't display easily
 ]
-toast = st.empty()
 
 
 @st.experimental_memo
@@ -85,7 +99,7 @@ with st.expander("What is this?"):
     st.markdown(Path("README.md").read_text())
 
 with st.expander("More info on Darts Datasets"):
-    ds_name = st.selectbox("See Docs for Dataset:", DS_NAMES, key="ds_doc")
+    ds_name = st.selectbox("See Docs for Dataset:", DS_NAMES[1:], key="ds_doc")
     ds_for_doc = getattr(ds, ds_name)
     st.write(f"#### {ds_name}")
     st.text(ds_for_doc)
@@ -111,26 +125,35 @@ with st.expander("More info on Darts Metrics"):
     st.text(metric_for_doc)
     st.text(metric_for_doc.__doc__)
 
+
+@st.experimental_memo
+def load_csv_data(csv_data, delimiter):
+    return pd.read_csv(csv_data, sep=delimiter)
+
+
 st.sidebar.subheader("Choose a Dataset")
-use_example = st.sidebar.checkbox(
-    "Use example dataset",
-    True,
-    help="If checked, will use Darts example dataset. Else requires uploading a CSV",
+if "dataset" not in st.session_state:
+    toast.info(f"Setting Default Dataset")
+    update_state("dataset", DS_NAMES[1])
+
+
+def update_dataset():
+    if "value_column" in st.session_state:
+        new_args = st.experimental_get_query_params()
+        del st.session_state["value_column"]
+        del new_args["value_column"]
+        st.experimental_set_query_params(**new_args)
+    update_state("dataset")
+
+
+st.sidebar.selectbox(
+    "Dataset", DS_NAMES, index=0, key="dataset", on_change=update_dataset
 )
-options = {
-    "Monthly": ("M", 12),
-    "Weekly": ("W", 52),
-    "Yearly": ("A", 1),
-    "Daily": ("D", 365),
-    "Hourly": ("H", 365 * 24),
-    "Quarterly": ("Q", 8),
-}
-if use_example:
-    dataset_choice = st.sidebar.selectbox("Dataset", DS_NAMES, index=0)
+if st.session_state.dataset != "Custom":
     with st.spinner("Fetching Dataset"):
-        toast.info(f"Loading {dataset_choice}")
-        df, timeseries = load_darts_dataset(dataset_choice)
-        toast.success(f"Loaded {dataset_choice}")
+        toast.info(f"Loading {st.session_state.dataset}")
+        df, timeseries = load_darts_dataset(st.session_state.dataset)
+        toast.success(f"Loaded {st.session_state.dataset}")
 else:
     timeseries = None
     csv_data = st.sidebar.file_uploader("Upload a CSV with Time Series Data")
@@ -145,7 +168,7 @@ else:
         st.warning("Upload a CSV to analyze")
         st.stop()
 
-    df = pd.read_csv(csv_data, sep=delimiter)
+    df = load_csv_data(csv_data, delimiter)
     with st.expander("Show Raw CSV Data"):
         st.dataframe(df)
 
@@ -157,7 +180,10 @@ else:
     df[time_col] = pd.to_datetime(df[time_col])
     df = df.set_index(time_col, drop=True)
 
+
 columns = list(df.columns)
+if "value_column" not in st.session_state:
+    update_state("value_column", columns[0])
 if len(columns) == 1:
     value_cols = columns[0]
     st.sidebar.info(f"Univariate Dataset, setting value column to {value_cols}")
@@ -166,10 +192,21 @@ else:
         "Values Column(s)",
         columns,
         columns[0],
+        key="value_column",
         help="Name of column(s) with values to sample and forecast",
+        on_change=update_state,
+        args=("value_column",),
     )
 
 if timeseries is None:
+    options = {
+        "Monthly": ("M", 12),
+        "Weekly": ("W", 52),
+        "Yearly": ("A", 1),
+        "Daily": ("D", 365),
+        "Hourly": ("H", 365 * 24),
+        "Quarterly": ("Q", 8),
+    }
     sampling_period = st.sidebar.selectbox(
         "Time Series Period",
         options,
@@ -188,8 +225,11 @@ model_choice = st.sidebar.selectbox(
     ALL_MODELS.index,
     2,
     help="Open 'Current Model Details' for documentation on parameters",
+    key="model",
+    on_change=update_state,
+    args=("model",),
 )
-model_cls = models.__getattribute__(model_choice)
+model_cls = getattr(models, model_choice)
 toast.success(f"Loaded {model_choice}")
 
 
@@ -208,8 +248,16 @@ model_args = []
 for name, parameter in signature(model_cls.__init__).parameters.items():
     if name != "self":
         if parameter.annotation == int:
+            if name in st.session_state:
+                st.session_state[name] = int(st.session_state[name])
             value = st.sidebar.number_input(
-                name, 0, value=parameter.default, key=name, help=str(parameter)
+                name,
+                0,
+                value=parameter.default,
+                key=name,
+                help=str(parameter),
+                on_change=update_state,
+                args=(name,),
             )
             model_kwargs[name] = value
         elif parameter.annotation == Optional[ModelMode]:
@@ -263,7 +311,12 @@ for name, parameter in signature(model_cls.__init__).parameters.items():
             model_args = ast.literal_eval(raw_value)
         else:
             raw_value = st.sidebar.text_input(
-                name, parameter.default, key=name, help=str(parameter)
+                name,
+                parameter.default,
+                key=name,
+                help=str(parameter),
+                on_change=update_state,
+                args=(name,),
             )
             parsed_value = ast.literal_eval(raw_value)
             model_kwargs[name] = parsed_value
@@ -359,42 +412,49 @@ with st.expander("Current Model Details"):
     st.write(model_kwargs)
     st.write(model_cls.__init__.__doc__)
 
-try:
-    model = model_cls(*model_args, **model_kwargs)
-except ValueError as e:
-    if "lags" in str(e):
-        st.error(str(e))
-        st.stop()
-    raise e
-
 st.sidebar.subheader("Customize Training")
+if "forecast_horizon" not in st.session_state:
+    update_state("forecast_horizon", 1)
+else:
+    st.session_state["forecast_horizon"] = int(st.session_state["forecast_horizon"])
 forecast_horizon = st.sidebar.number_input(
     "Forecast Horizon",
     key="forecast_horizon",
     min_value=1,
     max_value=len(timeseries),
-    value=1,
     help="(For Backtest and Historical Forecast) How many time steps separate the prediction time from the forecast time",
+    on_change=update_state,
+    args=("forecast_horizon",),
 )
-historical_forecast_stride = st.sidebar.number_input(
+if "stride" not in st.session_state:
+    update_state("stride", 1)
+else:
+    st.session_state["stride"] = int(st.session_state["stride"])
+stride = st.sidebar.number_input(
     "Historical Forecast Stride",
-    key="historical_forecast_stride",
+    key="stride",
     min_value=1,
     max_value=forecast_horizon,
-    value=1,
     help="(For Backtest and Historical Forecast) How many time steps between two consecutive predictions",
+    on_change=update_state,
+    args=("stride",),
 )
 st.sidebar.info(
     f"Model {model_choice} not a Neural Network. Will be retrained at every backtest stride."
 )
 historical_forecast_retrain = True
+if "num_predictions" not in st.session_state:
+    update_state("num_predictions", 36)
+else:
+    st.session_state["num_predictions"] = int(st.session_state["num_predictions"])
 num_predictions = st.sidebar.number_input(
     "Number of validation time steps",
     key="num_predictions",
     min_value=2,
     max_value=len(timeseries),
-    value=36,
     help="How many time steps worth of datapoints to exclude from training",
+    on_change=update_state,
+    args=("num_predictions",),
 )
 if not ALL_MODELS.at[model_choice, "Probabilistic"]:
     st.sidebar.info(
@@ -439,54 +499,96 @@ else:
     )
 
 
-def get_prediction(model, train, num_predictions):
-    toast.info("Training Model")
-    with st.spinner("Training..."):
-        model.fit(train)
-    toast.success("Trained Model")
-    toast.info(f"Forecasting {num_predictions} Time Steps")
-    with st.spinner("Forecasting..."):
-        prediction = model.predict(num_predictions, num_samples=num_samples)
-    toast.success(f"Forecasted data")
-    if prediction.is_deterministic:
-        prediction_df = prediction.pd_dataframe()
-    else:
-        prediction_df = prediction.quantiles_df(
-            [low_quantile, mid_quantile, high_quantile]
-        )
-    return prediction, prediction_df
+@st.experimental_memo
+def get_prediction(model_cls, model_args, model_kwargs, train, num_predictions):
+    model = model_cls(*model_args, **model_kwargs)
+    model.fit(TimeSeries.from_dataframe(train))
+    prediction = model.predict(num_predictions, num_samples=num_samples)
+    return prediction
 
 
+@st.experimental_memo
 def get_historical_forecast(
-    model, timeseries, start, forecast_horizon, stride, retrain
+    model_cls,
+    model_args,
+    model_kwargs,
+    timeseries,
+    start,
+    forecast_horizon,
+    stride,
+    retrain,
 ):
-    toast.info("Historical Forecast Running")
-    with st.spinner("Historical Forecast..."):
-        historical_forecast = model.historical_forecasts(
-            timeseries,
-            start=start,
-            forecast_horizon=forecast_horizon,
-            stride=stride,
-            retrain=retrain,
-            overlap_end=False,
-            last_points_only=True,
-        )
-        historical_df = historical_forecast.pd_dataframe()
-    toast.success("Historical Forecast Finished")
+    model = model_cls(*model_args, **model_kwargs)
+    historical_forecast = model.historical_forecasts(
+        TimeSeries.from_dataframe(timeseries),
+        start=start,
+        forecast_horizon=forecast_horizon,
+        stride=stride,
+        retrain=retrain,
+        overlap_end=False,
+        last_points_only=True,
+    )
+    historical_df = historical_forecast.pd_dataframe()
     return historical_forecast, historical_df
 
 
-train, val = timeseries[:-num_predictions], timeseries[-num_predictions:]
-prediction, prediction_df = get_prediction(model, train, num_predictions)
-historical_forecast, historical_df = get_historical_forecast(
-    model,
-    timeseries,
-    timeseries.n_timesteps - num_predictions,
+@st.experimental_memo
+def get_backtest(
+    model_cls,
+    model_args,
+    model_kwargs,
+    timeseries_df,
+    start,
     forecast_horizon,
-    historical_forecast_stride,
-    historical_forecast_retrain,
-)
+    stride,
+    retrain,
+    metric_name,
+    reduction,
+):
+    model = model_cls(*model_args, **model_kwargs)
+    metric_fn = ALL_METRICS[metric_name]
+    return model.backtest(
+        TimeSeries.from_dataframe(timeseries_df),
+        start=start,
+        forecast_horizon=forecast_horizon,
+        stride=stride,
+        retrain=retrain,
+        metric=metric_fn,
+        reduction=reduction,
+    )
 
+
+train, val = timeseries[:-num_predictions], timeseries[-num_predictions:]
+toast.info("Training Model")
+with st.spinner("Training..."):
+    try:
+        prediction = get_prediction(
+            model_cls, model_args, model_kwargs, train.pd_dataframe(), num_predictions
+        )
+    except ValueError as e:
+        if "lags" in str(e):
+            st.error(str(e))
+            st.stop()
+        raise e
+toast.success(f"Forecasted data")
+if prediction.is_deterministic:
+    prediction_df = prediction.pd_dataframe()
+else:
+    prediction_df = prediction.quantiles_df([low_quantile, mid_quantile, high_quantile])
+
+toast.info("Historical Forecast Running")
+with st.spinner("Historical Forecast..."):
+    historical_forecast, historical_df = get_historical_forecast(
+        model_cls,
+        model_args,
+        model_kwargs,
+        timeseries.pd_dataframe(),
+        timeseries.n_timesteps - num_predictions,
+        forecast_horizon,
+        stride,
+        historical_forecast_retrain,
+    )
+toast.success("Historical Forecast Finished")
 
 display_data = (
     timeseries.pd_dataframe()
@@ -506,12 +608,18 @@ if st.session_state.show_historical:
     )
 st.plotly_chart(px.line(display_data))
 st.subheader("View Error Metrics Over Validation Periods")
+if "metric" not in st.session_state:
+    update_state("metric", ["mape"])
+elif isinstance(st.session_state.metric, str):
+    st.session_state.metric = [st.session_state.metric]
+
 metric_choices = st.multiselect(
     "Scoring Metrics",
     ALL_METRICS,
     key="metric",
-    default="mape",
     help="Which metric functions are used to score the predictions against the ground truth values",
+    on_change=update_state,
+    args=("metric",),
 )
 if len(metric_choices):
     raw_scores = []
@@ -523,13 +631,16 @@ if len(metric_choices):
                 value = metric_fn(val, prediction, train)
             else:
                 value = metric_fn(val, prediction)
-                all_backtests[metric_name] = model.backtest(
-                    timeseries,
+                all_backtests[metric_name] = get_backtest(
+                    model_cls,
+                    model_args,
+                    model_kwargs,
+                    timeseries.pd_dataframe(),
                     start=timeseries.n_timesteps - num_predictions,
                     forecast_horizon=forecast_horizon,
-                    stride=historical_forecast_stride,
+                    stride=stride,
                     retrain=historical_forecast_retrain,
-                    metric=metric_fn,
+                    metric_name=metric_name,
                     reduction=None,
                 )
             raw_scores.append(
@@ -620,4 +731,13 @@ st.download_button(
     data=all_csv,
     file_name=f"all_data_{model_choice}_{datetime.now().strftime('%Y_%m_%d')}.csv",
     mime="text/csv",
+)
+
+model = model_cls(*model_args, **model_kwargs)
+model.fit(train)
+st.download_button(
+    label="Download Fitted Model Pickle",
+    data=pickle.dumps(model),
+    file_name=f"{model_choice}_{datetime.now().strftime('%Y_%m_%d')}.pickle",
+    mime="application/octet-stream",
 )
