@@ -605,6 +605,9 @@ if st.session_state.show_historical:
     display_data = display_data.join(
         historical_df.rename(lambda c: f"historical_forecast_{c}", axis=1)
     )
+    display_data.iloc[-num_predictions:] = display_data.iloc[-num_predictions:].fillna(
+        method="ffill"
+    )
 st.plotly_chart(px.line(display_data))
 st.subheader("View Error Metrics Over Validation Periods")
 if "metric" not in st.session_state:
